@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no, interactive-widget=resizes-content" />
+    <title>BBM Reborn</title>
+    
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/png" href="/icon.png" />
+    <link rel="apple-touch-icon" href="/icon.png" />
+    
+    <!-- PWA Hardware & Identity Meta Tags based on provided snippet -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#020617" />
+    <meta name="format-detection" content="telephone=no" />
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      // Polyfills for simple-peer
+      window.global = window;
+      window.process = { env: { DEBUG: undefined } };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/buffer@6.0.3/index.min.js"></script>
+    <script>
+      window.Buffer = buffer.Buffer;
+    </script>
+
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['"SF Pro Text"', '"SF Pro Display"', '-apple-system', 'BlinkMacSystemFont', 'Roboto', '"Segoe UI"', 'Helvetica', 'Arial', 'sans-serif'],
+            },
+            spacing: {
+              'safe-top': 'env(safe-area-inset-top)',
+              'safe-bottom': 'env(safe-area-inset-bottom)',
+              'safe-left': 'env(safe-area-inset-left)',
+              'safe-right': 'env(safe-area-inset-right)',
+            },
+            colors: {
+              bbm: {
+                blue: '#00A8E8', 
+                cerulean: '#007BA7',
+                arctic: '#82EEFD',
+                dark: '#0f172a', 
+                darker: '#020617', 
+                light: '#f8fafc', 
+                card: '#1e293b', 
+                red: '#ef4444', 
+                olive: '#82B324', 
+                input: '#F1F5F9'
+              }
+            }
+          },
+        },
+      }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.33.0",
+    "lucide-react": "https://esm.sh/lucide-react@^0.560.0",
+    "firebase/": "https://esm.sh/firebase@^12.6.0/",
+    "vite": "https://esm.sh/vite@^7.2.7",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
+    "simple-peer": "https://esm.sh/simple-peer@9.11.1",
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@^2.89.0"
+  }
+}
+</script>
+  </head>
+  <body class="bg-bbm-light dark:bg-bbm-darker">
+    <div id="root"></div>
+    <script type="module" src="/src/index.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "name": "BBM Reborn",
+  "description": "A modernized recreation of the classic BlackBerry Messenger experience featuring PINs, PINGs, and integrated AI chat powered by Gemini.",
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ]
+}

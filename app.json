@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "BBM Reborn",
+    "slug": "bbm-reborn",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./public/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./public/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#00A8E8"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.bbm.reborn"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./public/icon.png",
+        "backgroundColor": "#00A8E8"
+      },
+      "package": "com.bbm.reborn"
+    },
+    "web": {
+      "favicon": "./public/icon.png"
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "static"
+          }
+        }
+      ]
+    ]
+  }
+}
