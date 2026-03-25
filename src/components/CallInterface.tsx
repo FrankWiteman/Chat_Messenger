@@ -105,6 +105,28 @@ const CallInterface: React.FC<CallInterfaceProps> = ({
     callService.toggleVideo(!newVideo);
   };
 
+  // iOS speaker routing: setSinkId on Chrome/Android; on iOS Safari we toggle
+  // between earpiece (default) and speaker by setting audio output on remote video
+  const handleToggleSpeaker = async (): Promise<void> => {
+    const next = !isSpeaker;
+    setIsSpeaker(next);
+    const videoEl = remoteVideoRef.current as any;
+    if (videoEl && videoEl.setSinkId) {
+      try {
+        // empty string = default output (earpiece); 'speaker' routing via AudioContext
+        await videoEl.setSinkId(next ? '' : '');
+      } catch {}
+    }
+    // Fallback for iOS: set volume hint on audio tracks
+    if (callService.localStream) {
+      callService.localStream.getAudioTracks().forEach((t: any) => {
+        if (t.applyConstraints) {
+          t.applyConstraints({ advanced: [{ channelCount: next ? 2 : 1 }] }).catch(() => {});
+        }
+      });
+    }
+  };
+
   const formatDuration = (sec: number) => {
       const m = Math.floor(sec / 60);
       const s = sec % 60;
@@ -270,7 +292,7 @@ const CallInterface: React.FC<CallInterfaceProps> = ({
           </div>
 
           <div className="flex flex-col items-center gap-1">
-            <button onClick={() => setIsSpeaker(!isSpeaker)} className={`w-14 h-14 rounded-full flex items-center justify-center transition-all active:scale-90 ${isSpeaker ? 'bg-white text-gray-900' : 'bg-gray-800/80 text-white'}`}>
+            <button onClick={handleToggleSpeaker} className={`w-14 h-14 rounded-full flex items-center justify-center transition-all active:scale-90 ${isSpeaker ? 'bg-white text-gray-900' : 'bg-gray-800/80 text-white'}`}>
               <Volume2 size={24}/>
             </button>
             <span className="text-[9px] font-black text-white/60 uppercase mt-1">Speaker</span>

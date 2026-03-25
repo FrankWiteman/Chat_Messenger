@@ -24,14 +24,11 @@ import { callService } from './services/callService';
 import type { CallData } from './services/callService';
 import { db, auth, isFirebaseConfigured } from './services/firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
-import * as firebaseAuth from 'firebase/auth';
+import { onAuthStateChanged } from 'firebase/auth';
 import { Laptop, Share, PlusSquare, X } from 'lucide-react';
 import { useOnlinePresence } from './hooks/useOnlinePresence';
 import { useNotifications } from './hooks/useNotifications';
 import { isIOS as checkIsIOS, isPWA as checkIsPWA, setupVisibilityListener, handleAppResume } from './services/notificationService';
-
-// Cast to any to avoid "Module has no exported member" errors
-const { onAuthStateChanged } = firebaseAuth as any;
 
 const AI_CONTACT: User = {
   id: 'ai_bot',
@@ -315,25 +312,25 @@ const App: React.FC = () => {
   // --- Call Handlers ---
   const handleInitiateCall = async (contact: User, type: 'voice' | 'video') => {
       if (!currentUser) return;
-      
       if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
-          alert("Calls require a secure HTTPS connection.");
+          alert('Calls require a secure HTTPS connection.');
           return;
       }
-
       setActiveCall({ isActive: true, type, contact, status: 'ringing', startTime: Date.now() });
       const result = await callService.startCall(
           currentUser.id, currentUser.name, currentUser.avatarUrl, contact.id, type,
           (remoteStream) => {
               if ((window as any).setRemoteStream) (window as any).setRemoteStream(remoteStream);
+          },
+          (event, detail) => {
+              if (event === 'error') { setActiveCall(null); }
+              if (event === 'ended' || event === 'rejected') { setActiveCall(null); }
           }
       );
-
       if (result) {
           if ((window as any).setLocalStream) (window as any).setLocalStream(result.stream);
       } else {
           setActiveCall(null);
-          alert("Could not start call.");
       }
   };
 
@@ -343,14 +340,20 @@ const App: React.FC = () => {
       setIncomingCall(null);
       const caller: User = { id: data.from, name: data.fromName || 'Unknown', avatarUrl: data.fromAvatar || '', pin: '????', status: UserStatus.BUSY, statusMessage: 'In a call' };
       setActiveCall({ isActive: true, type: data.type, contact: caller, status: 'connected', startTime: Date.now() });
-      const localStream = await callService.answerCall(id, currentUser.id, data, (remoteStream) => {
-          if ((window as any).setRemoteStream) (window as any).setRemoteStream(remoteStream);
-      });
+      const localStream = await callService.answerCall(
+          id, currentUser.id, data,
+          (remoteStream) => {
+              if ((window as any).setRemoteStream) (window as any).setRemoteStream(remoteStream);
+          },
+          (event) => {
+              if (event === 'ended' || event === 'error') setActiveCall(null);
+          }
+      );
       if (localStream && (window as any).setLocalStream) (window as any).setLocalStream(localStream);
   };
 
   const handleRejectCall = () => { if (incomingCall && currentUser) { callService.rejectCall(currentUser.id, incomingCall.id); setIncomingCall(null); } };
-  const handleEndCall = () => { if (currentUser) callService.endCall(currentUser.id, incomingCall?.id); setActiveCall(null); };
+  const handleEndCall = () => { callService.endCall(currentUser?.id, incomingCall?.id); setActiveCall(null); };
 
   const handleLoginSuccess = (user: User) => {
       setCurrentUser(user); 
@@ -508,7 +511,7 @@ const App: React.FC = () => {
   return (
     <div className={isDarkMode ? 'dark' : ''}>
       <div 
-        className="w-full h-[100dvh] bg-bbm-light dark:bg-bbm-darker overflow-hidden overscroll-none flex flex-col"
+        className="w-full h-[100dvh] bg-bbm-light dark:bg-bbm-darker overflow-hidden overscroll-none flex flex-col" style={{height: "100dvh"}}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >

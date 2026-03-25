@@ -4,7 +4,7 @@ import { UserStatus, Screen } from '../types';
 import type { User } from '../types';
 // Fixed: Added missing ArrowLeft import to satisfy dependencies on line 99
 import { Camera, ArrowLeft, Copy, Music, MessageSquare, LogOut, Bell, Shield, Settings, HelpCircle, ChevronRight, ChevronLeft, ChevronDown, Check, QrCode, X, Share2, CheckCircle2, Loader } from 'lucide-react';
-import { handleProfileUpload } from '../services/hybridFileService';
+import { uploadProfilePicture } from '../services/fileService';
 
 interface ProfileProps {
   user: User;
@@ -56,7 +56,7 @@ const Profile: React.FC<ProfileProps> = ({ user, onUpdateStatus, onUpdateAvatar,
           const file = e.target.files[0];
           setIsUploading(true);
           try {
-              const url = await handleProfileUpload(file, user.id);
+              const url = await uploadProfilePicture(file, user.id);
               onUpdateAvatar(url);
           } catch(e) {
               console.error("Avatar upload failed", e);

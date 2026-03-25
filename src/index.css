@@ -1,40 +1,60 @@
-
 :root {
   --bbm-blue: #00A8E8;
 }
 
-/* 📱 Immersive Native App Container Pattern */
-html, body {
+/* ============================================================
+   Core reset — full-bleed native-app feel
+   ============================================================ */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
   height: 100%;
+  /* Fill the ENTIRE viewport including notch/status-bar region */
+  height: -webkit-fill-available;
+  height: 100dvh;
+  width: 100%;
+  overflow: hidden;
+  background-color: #020617;
+}
+
+body {
+  height: 100%;
+  height: -webkit-fill-available;
+  height: 100dvh;
   width: 100%;
   margin: 0;
   padding: 0;
   overflow: hidden;
   background-color: #020617;
+
+  /* Prevent rubber-band overscroll that exposes black bars */
   overscroll-behavior: none;
+  -webkit-overflow-scrolling: auto;
+
+  /* Kill the 300ms tap delay on mobile */
+  touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  
-  /* Safe area hacks for mobile browser address bars */
-  min-height: 100%;
-  min-height: calc(100% + constant(safe-area-inset-top));
-  min-height: calc(100% + env(safe-area-inset-top));
-}
 
-body {
-  font-family: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
+               "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
+/*
+  #root fills the whole screen but uses safe-area padding so content
+  never goes under the notch or home indicator.
+  We use padding (not margin) so backgrounds extend edge-to-edge while
+  interactive content stays in the safe zone.
+*/
 #root {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  bottom: 0;
-  /* Extend bottom to prevent gaps under home indicator when translucent is active */
-  bottom: calc(0px - constant(safe-area-inset-top));
-  bottom: calc(0px - env(safe-area-inset-top));
-  
+  position: fixed;        /* fixed = never scrolls with page, anchors to viewport */
+  inset: 0;               /* top/right/bottom/left: 0 */
+  width: 100%;
+  height: 100%;
+  height: 100dvh;         /* dynamic viewport height — respects appearing/disappearing browser chrome */
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -42,11 +62,41 @@ body {
 }
 
 @media (prefers-color-scheme: dark) {
-  #root {
-    background-color: #020617;
-  }
+  #root { background-color: #020617; }
 }
 
+/* ============================================================
+   Safe-area utility classes (use these in components)
+   ============================================================ */
+
+/* Pad the TOP of a header/status-bar region */
+.pt-safe {
+  padding-top: constant(safe-area-inset-top);   /* iOS < 11.2 */
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Pad the BOTTOM — home indicator / gesture bar */
+.pb-safe {
+  padding-bottom: constant(safe-area-inset-bottom);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Full safe padding (all sides) — use on full-screen overlays */
+.p-safe {
+  padding-top:    env(safe-area-inset-top);
+  padding-right:  env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left:   env(safe-area-inset-left);
+}
+
+/* Min-height that accounts for bottom bar */
+.min-h-safe {
+  min-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+}
+
+/* ============================================================
+   Scroll containers
+   ============================================================ */
 .scroll-container {
   flex: 1;
   overflow-y: auto;
@@ -54,53 +104,95 @@ body {
   overscroll-behavior-y: contain;
 }
 
-.pt-safe { 
-  padding-top: constant(safe-area-inset-top); 
-  padding-top: env(safe-area-inset-top); 
-}
-
-.pb-safe { 
-  padding-bottom: constant(safe-area-inset-bottom); 
-  padding-bottom: env(safe-area-inset-bottom); 
-}
-
+/* Hide scrollbars visually but keep them functional */
 .no-scrollbar::-webkit-scrollbar { display: none; }
-.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-
-.animate-ios-slide-in {
-  animation: iosSlideIn 0.35s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
+/* ============================================================
+   Screen transition animations
+   ============================================================ */
+
+/* iOS-style: slide in from right */
+.animate-ios-slide-in {
+  animation: iosSlideIn 0.32s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
 @keyframes iosSlideIn {
   from { transform: translateX(100%); }
-  to { transform: translateX(0); }
+  to   { transform: translateX(0); }
 }
 
+/* iOS-style: slide back to right (going back) */
+.animate-ios-slide-out {
+  animation: iosSlideOut 0.32s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+@keyframes iosSlideOut {
+  from { transform: translateX(0); }
+  to   { transform: translateX(100%); }
+}
+
+/* Android Material-style: fade + scale up */
 .animate-android-fade-scale {
-  animation: androidFadeScale 0.3s ease-out forwards;
+  animation: androidFadeScale 0.25s ease-out forwards;
 }
-
 @keyframes androidFadeScale {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
 }
 
+/* Generic fade in (used by modals / call overlay) */
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out forwards;
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Slide up (used by install prompt banner) */
+.animate-slide-up {
+  animation: slideUp 0.3s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+/* ============================================================
+   Chat messages area
+   ============================================================ */
 .chat-messages-area {
   flex: 1;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
 }
 
-/* Glassmorphism utility */
+/* ============================================================
+   Glassmorphism utility
+   ============================================================ */
 .glass {
-  background: rgba(255, 255, 255, 0.7);
-  backdrop-filter: blur(15px) saturate(160%);
-  -webkit-backdrop-filter: blur(15px) saturate(160%);
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+}
+.dark .glass {
+  background: rgba(15, 23, 42, 0.72);
 }
 
-.dark .glass {
-  background: rgba(15, 23, 42, 0.7);
-  backdrop-filter: blur(15px) saturate(160%);
-  -webkit-backdrop-filter: blur(15px) saturate(160%);
+/* ============================================================
+   Android keyboard fix
+   When the virtual keyboard opens on Android, the browser
+   reduces 100vh.  Using 100dvh handles this automatically, but
+   we also suppress the resize event causing layout jumps in
+   older WebViews.
+   ============================================================ */
+@supports not (height: 100dvh) {
+  #root {
+    height: calc(var(--vh, 1vh) * 100);
+  }
 }

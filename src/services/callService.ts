@@ -1,251 +1,433 @@
-import SimplePeer from 'simple-peer';
-import { ref, set, onValue, push, off, remove } from 'firebase/database';
+/**
+ * BBM Call Service — Native WebRTC (no simple-peer)
+ *
+ * Why native WebRTC instead of simple-peer:
+ * - simple-peer requires Node.js globals (process, Buffer) that break in PWA/iOS Safari
+ * - Native RTCPeerConnection works in all browsers including iOS Safari 11+
+ * - Full control over ICE restart, trickle ICE, and TURN fallback
+ *
+ * Architecture:
+ * - Firebase Realtime Database is the signaling channel
+ * - Trickle ICE for fast connection (candidates sent as they arrive)
+ * - Free TURN servers as fallback for symmetric NAT
+ */
+
+import { ref, set, onValue, push, off, remove, get } from 'firebase/database';
 import { database } from './firebase';
 
-if (typeof window !== 'undefined' && !(window as any).global) {
-  (window as any).global = window;
-}
-
+// ============================================================================
+// Types
+// ============================================================================
 export interface CallData {
   from: string;
   fromName?: string;
   fromAvatar?: string;
   to: string;
   type: 'voice' | 'video';
-  signal?: any;
-  answer?: any;
+  offer?: string;        // JSON-stringified RTCSessionDescriptionInit
+  answer?: string;       // JSON-stringified RTCSessionDescriptionInit
   status: 'ringing' | 'accepted' | 'rejected' | 'ended' | 'busy';
   timestamp: number;
 }
 
+type CallEventHandler = (event: string, detail?: any) => void;
+
+// ============================================================================
+// ICE Server config — STUN + free TURN fallback
+// Open relay TURN servers work for most NAT scenarios
+// For production replace with your own Twilio/Xirsys TURN credentials
+// ============================================================================
+const ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun.relay.metered.ca:80' },
+  {
+    urls: 'turn:a.relay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:a.relay.metered.ca:443',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:a.relay.metered.ca:443?transport=tcp',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+];
+
+// ============================================================================
+// CallService
+// ============================================================================
 class CallService {
-  public peer: SimplePeer.Instance | null = null;
   public localStream: MediaStream | null = null;
+  private pc: RTCPeerConnection | null = null;
   private currentCallId: string | null = null;
+  private myUserId: string | null = null;
   private recipientId: string | null = null;
+  private onEventHandler: CallEventHandler | null = null;
+  private iceCandidatesBuffer: RTCIceCandidate[] = [];
+  private remoteDescriptionSet = false;
+  private callListenerUnsubscribe: (() => void) | null = null;
 
-  private dispatchError(msg: string) {
-    console.error(`[BBM CALL ERROR] ${msg}`);
-    window.dispatchEvent(new CustomEvent('bbm-call-error', { detail: msg }));
-  }
+  // ── Public API ─────────────────────────────────────────────────────────────
 
+  /**
+   * Outgoing call — caller side
+   */
   async startCall(
     fromUserId: string,
     fromUserName: string,
     fromUserAvatar: string,
     toUserId: string,
     callType: 'voice' | 'video',
-    onRemoteStream: (stream: MediaStream) => void
-  ): Promise<{ stream: MediaStream, callId: string } | null> {
-    
-    // 1. Signaling Check
+    onRemoteStream: (stream: MediaStream) => void,
+    onEvent?: CallEventHandler
+  ): Promise<{ stream: MediaStream; callId: string } | null> {
+    this.onEventHandler = onEvent || null;
+
     if (!database) {
-        this.dispatchError("Realtime Database not initialized. Call signaling requires RTDB.");
-        return null;
+      this._emit('error', 'Realtime Database not configured. Check your Firebase setup.');
+      return null;
     }
 
-    // 2. Security Check
     if (!window.isSecureContext) {
-        this.dispatchError("Insecure Context: WebRTC (Calls) requires HTTPS or localhost.");
-        return null;
+      this._emit('error', 'HTTPS required for calls. Make sure you\'re on https://');
+      return null;
     }
 
     try {
-      // 3. Media Permissions
-      console.log("[BBM CALL] Requesting hardware access...");
-      const constraints: MediaStreamConstraints = {
-        audio: true,
-        video: callType === 'video' ? { facingMode: 'user' } : false
-      };
+      // Get media
+      this.localStream = await this._getMedia(callType);
+      if (!this.localStream) return null;
 
-      try {
-        this.localStream = await navigator.mediaDevices.getUserMedia(constraints);
-        console.log("[BBM CALL] Hardware access granted.");
-      } catch (mediaError: any) {
-        this.dispatchError(`Permission Denied: ${mediaError.message}`);
-        return null;
-      }
-
+      this.myUserId = fromUserId;
       this.recipientId = toUserId;
+
+      // Create call record in RTDB
       const callsRef = ref(database, `calls/${toUserId}`);
       const newCallRef = push(callsRef);
-      this.currentCallId = newCallRef.key;
+      this.currentCallId = newCallRef.key!;
 
-      // 4. Peer Initialization
-      this.peer = new SimplePeer({
-        initiator: true,
-        stream: this.localStream,
-        trickle: false,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' }
-          ]
-        }
+      // Set up PeerConnection
+      this.pc = this._createPC(onRemoteStream);
+
+      // Add local tracks
+      this.localStream.getTracks().forEach((t) => this.pc!.addTrack(t, this.localStream!));
+
+      // Create offer
+      const offer = await this.pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: callType === 'video',
       });
+      await this.pc.setLocalDescription(offer);
 
-      this.peer.on('signal', async (signal: any) => {
-        if (this.currentCallId) {
+      // Write initial call record
+      await set(newCallRef, {
+        from: fromUserId,
+        fromName: fromUserName,
+        fromAvatar: fromUserAvatar,
+        to: toUserId,
+        type: callType,
+        offer: JSON.stringify(offer),
+        status: 'ringing',
+        timestamp: Date.now(),
+      } as CallData);
+
+      // Listen for answer
+      const answerRef = ref(database, `calls/${toUserId}/${this.currentCallId}/answer`);
+      onValue(answerRef, async (snap) => {
+        const answerStr = snap.val();
+        if (answerStr && this.pc && this.pc.signalingState !== 'stable') {
           try {
-            console.log("[BBM CALL] Generating signal, writing to DB...");
-            await set(ref(database, `calls/${toUserId}/${this.currentCallId}`), {
-                from: fromUserId,
-                fromName: fromUserName,
-                fromAvatar: fromUserAvatar,
-                to: toUserId,
-                type: callType,
-                status: 'ringing',
-                signal: JSON.stringify(signal),
-                timestamp: Date.now()
-              });
-            console.log("[BBM CALL] Signal written successfully.");
-          } catch (dbErr: any) {
-              this.dispatchError(`Signaling Failed: ${dbErr.message}. Verify Database Rules and URL.`);
-          }
-        }
-      });
-
-      this.peer.on('stream', (stream: MediaStream) => {
-        console.log("[BBM CALL] Remote stream received.");
-        onRemoteStream(stream);
-      });
-
-      this.peer.on('error', (err: Error) => {
-        this.dispatchError(`Connection Error: ${err.message}`);
-        this.cleanup();
-      });
-
-      // 5. Remote Handshake Listeners
-      const answerPath = `calls/${toUserId}/${this.currentCallId}/answer`;
-      onValue(ref(database, answerPath), (snapshot) => {
-        const answer = snapshot.val();
-        if (answer && this.peer && !this.peer.destroyed) {
-          try {
-            this.peer.signal(JSON.parse(answer));
+            const answer = JSON.parse(answerStr);
+            await this.pc.setRemoteDescription(new RTCSessionDescription(answer));
+            this.remoteDescriptionSet = true;
+            this._flushIceCandidates(toUserId, this.currentCallId!);
           } catch (e) {
-            console.error("Signal parse error", e);
+            console.error('[BBM Call] Answer parse error', e);
           }
         }
       });
 
-      const statusPath = `calls/${toUserId}/${this.currentCallId}/status`;
-      onValue(ref(database, statusPath), (snapshot) => {
-        const status = snapshot.val();
-        if (status === 'rejected' || status === 'ended') {
-          this.cleanup();
-        }
+      // Listen for status changes
+      const statusRef = ref(database, `calls/${toUserId}/${this.currentCallId}/status`);
+      onValue(statusRef, (snap) => {
+        const status = snap.val();
+        if (status === 'rejected') { this._emit('rejected'); this.cleanup(); }
+        if (status === 'ended') { this._emit('ended'); this.cleanup(); }
       });
 
-      return { stream: this.localStream, callId: this.currentCallId! };
+      // Listen for remote ICE candidates
+      this._listenForRemoteICE(toUserId, this.currentCallId, 'callee');
+
+      return { stream: this.localStream, callId: this.currentCallId };
     } catch (e: any) {
-      this.dispatchError(e.message || "Failed to initialize call service.");
+      this._emit('error', e.message || 'Failed to start call');
+      this.cleanup();
       return null;
     }
   }
 
+  /**
+   * Answer incoming call — callee side
+   */
   async answerCall(
     callId: string,
     myUserId: string,
     callData: CallData,
-    onRemoteStream: (stream: MediaStream) => void
+    onRemoteStream: (stream: MediaStream) => void,
+    onEvent?: CallEventHandler
   ): Promise<MediaStream | null> {
+    this.onEventHandler = onEvent || null;
+
     if (!database) return null;
 
     try {
-      const constraints = {
-        video: callData.type === 'video' ? { facingMode: 'user' } : false,
-        audio: true
-      };
+      this.localStream = await this._getMedia(callData.type);
+      if (!this.localStream) return null;
 
-      this.localStream = await navigator.mediaDevices.getUserMedia(constraints);
+      this.myUserId = myUserId;
       this.currentCallId = callId;
       this.recipientId = callData.from;
 
-      this.peer = new SimplePeer({
-        initiator: false,
-        stream: this.localStream,
-        trickle: false
-      });
+      this.pc = this._createPC(onRemoteStream);
+      this.localStream.getTracks().forEach((t) => this.pc!.addTrack(t, this.localStream!));
 
-      if (callData.signal) {
-        this.peer.signal(JSON.parse(callData.signal));
-      }
+      // Set remote description (the offer)
+      const offer = JSON.parse(callData.offer!);
+      await this.pc.setRemoteDescription(new RTCSessionDescription(offer));
+      this.remoteDescriptionSet = true;
 
-      this.peer.on('signal', async (signal: any) => {
-        await set(ref(database, `calls/${myUserId}/${callId}/answer`), JSON.stringify(signal));
-        await set(ref(database, `calls/${myUserId}/${callId}/status`), 'accepted');
-      });
+      // Create answer
+      const answer = await this.pc.createAnswer();
+      await this.pc.setLocalDescription(answer);
 
-      this.peer.on('stream', (stream: MediaStream) => {
-        onRemoteStream(stream);
+      // Write answer + accepted status
+      await set(ref(database, `calls/${myUserId}/${callId}/answer`), JSON.stringify(answer));
+      await set(ref(database, `calls/${myUserId}/${callId}/status`), 'accepted');
+
+      // Flush any buffered ICE candidates
+      this._flushIceCandidates(myUserId, callId);
+
+      // Listen for remote ICE candidates (from caller)
+      this._listenForRemoteICE(myUserId, callId, 'caller');
+
+      // Listen for call end
+      const statusRef = ref(database, `calls/${myUserId}/${callId}/status`);
+      onValue(statusRef, (snap) => {
+        const status = snap.val();
+        if (status === 'ended') { this._emit('ended'); this.cleanup(); }
       });
 
       return this.localStream;
     } catch (e: any) {
-      console.error("[BBM CALL] Answer Failed:", e);
+      console.error('[BBM Call] Answer failed:', e);
+      this._emit('error', e.message);
+      this.cleanup();
       return null;
     }
   }
 
-  listenForCalls(userId: string, onIncomingCall: (call: CallData, callId: string) => void) {
+  /**
+   * Listen for incoming calls
+   */
+  listenForCalls(
+    userId: string,
+    onIncomingCall: (call: CallData, callId: string) => void
+  ): () => void {
     if (!database) return () => {};
+
     const callsRef = ref(database, `calls/${userId}`);
-    const unsubscribe = onValue(callsRef, (snapshot) => {
+    const handler = onValue(callsRef, (snapshot) => {
       snapshot.forEach((child) => {
-        const call = child.val();
-        const callId = child.key;
-        // Only notify for fresh ringing calls (within last 60 seconds)
-        if (call.status === 'ringing' && (Date.now() - call.timestamp < 60000)) {
-          onIncomingCall(call, callId!);
+        const call = child.val() as CallData;
+        const callId = child.key!;
+        // Fresh ringing calls only (within last 60s)
+        if (call.status === 'ringing' && Date.now() - call.timestamp < 60000) {
+          onIncomingCall(call, callId);
         }
       });
     });
-    return () => off(callsRef, 'value', unsubscribe);
+
+    this.callListenerUnsubscribe = () => off(callsRef, 'value', handler);
+    return this.callListenerUnsubscribe;
   }
 
   async rejectCall(userId: string, callId: string) {
     if (!database) return;
     await set(ref(database, `calls/${userId}/${callId}/status`), 'rejected');
-    // Auto-clean after 5s
     setTimeout(() => remove(ref(database, `calls/${userId}/${callId}`)), 5000);
   }
 
-  endCall(userId: string, callId?: string) {
-    const id = callId || this.currentCallId;
-    if (database && id) {
-      set(ref(database, `calls/${userId}/${id}/status`), 'ended').catch(() => {});
+  endCall(userId?: string, callId?: string) {
+    const uid = userId || this.myUserId;
+    const cid = callId || this.currentCallId;
+    if (database && uid && cid) {
+      set(ref(database, `calls/${uid}/${cid}/status`), 'ended').catch(() => {});
       if (this.recipientId) {
-        set(ref(database, `calls/${this.recipientId}/${id}/status`), 'ended').catch(() => {});
+        set(ref(database, `calls/${this.recipientId}/${cid}/status`), 'ended').catch(() => {});
       }
-      setTimeout(() => remove(ref(database, `calls/${userId}/${id}`)), 5000);
+      setTimeout(() => {
+        if (uid) remove(ref(database, `calls/${uid}/${cid}`)).catch(() => {});
+      }, 5000);
     }
     this.cleanup();
   }
 
-  private cleanup() {
-    if (this.localStream) {
-      this.localStream.getTracks().forEach(t => t.stop());
-      this.localStream = null;
-    }
-    if (this.peer) {
-      this.peer.destroy();
-      this.peer = null;
-    }
-    this.currentCallId = null;
-    this.recipientId = null;
-    window.dispatchEvent(new CustomEvent('bbm-call-ended'));
-  }
-
   toggleMute(muted: boolean) {
-    if (this.localStream) {
-      this.localStream.getAudioTracks().forEach(t => t.enabled = !muted);
-    }
+    this.localStream?.getAudioTracks().forEach((t) => (t.enabled = !muted));
   }
 
   toggleVideo(enabled: boolean) {
-    if (this.localStream) {
-      this.localStream.getVideoTracks().forEach(t => t.enabled = enabled);
+    this.localStream?.getVideoTracks().forEach((t) => (t.enabled = enabled));
+  }
+
+  // ── Private helpers ────────────────────────────────────────────────────────
+
+  private async _getMedia(callType: 'voice' | 'video'): Promise<MediaStream | null> {
+    try {
+      const constraints: MediaStreamConstraints = {
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: callType === 'video'
+          ? { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+          : false,
+      };
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (e: any) {
+      let msg = 'Microphone/camera access denied.';
+      if (e.name === 'NotFoundError') msg = 'No microphone or camera found on this device.';
+      if (e.name === 'NotAllowedError') msg = 'Permission denied. Please allow mic/camera in your browser settings.';
+      if (e.name === 'NotReadableError') msg = 'Camera/mic is in use by another app.';
+      this._emit('error', msg);
+      return null;
     }
+  }
+
+  private _createPC(onRemoteStream: (stream: MediaStream) => void): RTCPeerConnection {
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+    // Send local ICE candidates to remote via RTDB
+    pc.onicecandidate = (event) => {
+      if (!event.candidate || !database || !this.currentCallId) return;
+
+      if (this.remoteDescriptionSet && this.recipientId) {
+        // Send directly
+        const candidatesRef = ref(
+          database,
+          `calls/${this.recipientId}/${this.currentCallId}/candidates/${this.myUserId}`
+        );
+        push(candidatesRef, JSON.stringify(event.candidate)).catch(() => {});
+      } else {
+        // Buffer until remote description is set
+        this.iceCandidatesBuffer.push(event.candidate);
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      console.log('[BBM Call] Connection state:', pc.connectionState);
+      if (pc.connectionState === 'connected') this._emit('connected');
+      if (pc.connectionState === 'failed') {
+        this._emit('error', 'Connection failed. Check network or try again.');
+        this.cleanup();
+      }
+      if (pc.connectionState === 'disconnected') {
+        // Give it 5s to reconnect before giving up
+        setTimeout(() => {
+          if (this.pc?.connectionState === 'disconnected') {
+            this._emit('error', 'Call disconnected.');
+            this.cleanup();
+          }
+        }, 5000);
+      }
+    };
+
+    pc.ontrack = (event) => {
+      const [stream] = event.streams;
+      if (stream) onRemoteStream(stream);
+    };
+
+    return pc;
+  }
+
+  private async _flushIceCandidates(recipientId: string, callId: string) {
+    if (!database || this.iceCandidatesBuffer.length === 0) return;
+    const candidatesRef = ref(
+      database,
+      `calls/${recipientId}/${callId}/candidates/${this.myUserId}`
+    );
+    for (const candidate of this.iceCandidatesBuffer) {
+      await push(candidatesRef, JSON.stringify(candidate)).catch(() => {});
+    }
+    this.iceCandidatesBuffer = [];
+  }
+
+  private _listenForRemoteICE(
+    userId: string,
+    callId: string,
+    remoteRole: 'caller' | 'callee'
+  ) {
+    if (!database) return;
+    // The remote side writes candidates under their own userId key
+    // We listen under the path of the OTHER user's candidates
+    const remoteUserId = remoteRole === 'caller' ? this.recipientId : this.myUserId;
+    if (!remoteUserId) return;
+
+    // Actually we need to listen to the sender's side
+    // Caller writes to calls/${toUserId}/${callId}/candidates/${fromUserId}
+    // Callee reads from calls/${myUserId}/${callId}/candidates/${callData.from}
+    const senderKey = remoteRole === 'callee' ? this.recipientId : this.myUserId;
+    const candidatesRef = ref(database, `calls/${userId}/${callId}/candidates/${senderKey}`);
+
+    onValue(candidatesRef, async (snapshot) => {
+      if (!this.pc) return;
+      snapshot.forEach((child) => {
+        const candidateStr = child.val();
+        if (candidateStr) {
+          try {
+            const candidate = JSON.parse(candidateStr);
+            this.pc!.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+          } catch {}
+        }
+      });
+    });
+  }
+
+  private _emit(event: string, detail?: any) {
+    if (this.onEventHandler) this.onEventHandler(event, detail);
+    if (event === 'error') {
+      console.error('[BBM Call Error]', detail);
+      window.dispatchEvent(new CustomEvent('bbm-call-error', { detail }));
+    }
+    if (event === 'ended' || event === 'rejected') {
+      window.dispatchEvent(new CustomEvent('bbm-call-ended'));
+    }
+  }
+
+  cleanup() {
+    this.localStream?.getTracks().forEach((t) => t.stop());
+    this.localStream = null;
+
+    if (this.pc) {
+      this.pc.ontrack = null;
+      this.pc.onicecandidate = null;
+      this.pc.onconnectionstatechange = null;
+      this.pc.close();
+      this.pc = null;
+    }
+
+    this.currentCallId = null;
+    this.recipientId = null;
+    this.myUserId = null;
+    this.remoteDescriptionSet = false;
+    this.iceCandidatesBuffer = [];
+    window.dispatchEvent(new CustomEvent('bbm-call-ended'));
   }
 }
 

@@ -22,8 +22,7 @@
     "react": "18.2.0",
     "react-dom": "18.2.0",
     "react-native": "0.73.6",
-    "react-native-webview": "13.8.6",
-    "simple-peer": "^9.11.1"
+    "react-native-webview": "13.8.6"
   },
   "devDependencies": {
     "@babel/core": "^7.20.0",
@@ -31,7 +30,6 @@
     "@types/react": "^18.2.55",
     "@types/react-dom": "^18.2.19",
     "@types/react-native": "^0.73.0",
-    "@types/simple-peer": "^9.11.8",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.17",
     "buffer": "^6.0.3",

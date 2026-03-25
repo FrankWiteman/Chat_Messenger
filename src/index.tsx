@@ -2,7 +2,18 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
 
-// Initialize App
+// ─── Android keyboard / dynamic-viewport fix ──────────────────────────────────
+// On Android, 100vh is the initial viewport and does not shrink when the
+// soft keyboard appears.  100dvh (dynamic) does, but older WebViews don't
+// support it.  We set --vh as a CSS custom property so index.css fallback
+// calc(var(--vh)*100) tracks the REAL visible height.
+const setVh = () => {
+  document.documentElement.style.setProperty('--vh', `${window.innerHeight * 0.01}px`);
+};
+setVh();
+window.addEventListener('resize', setVh);
+
+// ─── Initialize App ───────────────────────────────────────────────────────────
 const initApp = async () => {
   const rootElement = document.getElementById('root');
   if (!rootElement) {

@@ -35,11 +35,10 @@ const BottomNav: React.FC<BottomNavProps> = ({
 
   return (
     <div 
-      className={`fixed bottom-0 left-0 right-0 flex justify-between items-start z-50 px-6 pt-2 transition-all duration-300 ${isIOS ? iosNavClass : androidNavClass}`}
+      className={`flex justify-between items-start z-50 px-6 pt-2 transition-all duration-300 shrink-0 ${isIOS ? iosNavClass : androidNavClass}`}
       style={{ 
-        /* Harbor logic: Padding bottom based on env/constant to fill the screen edge */
         paddingBottom: 'env(safe-area-inset-bottom)',
-        height: 'calc(64px + env(safe-area-inset-bottom))',
+        minHeight: 'calc(60px + env(safe-area-inset-bottom))',
       }}
     >
       <button 

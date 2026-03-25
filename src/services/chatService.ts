@@ -365,7 +365,7 @@ export const subscribeToChatUpdates = (
 // -----------------------------------------------------------------------------
 // Mark message as delivered (Atomic Batch Update for Global Sync)
 // -----------------------------------------------------------------------------
-export const markMessageAsDelivered = async (chatId: string, userId: string) => {
+const markMessageAsDelivered = async (chatId: string, userId: string) => {
   if (!db) return;
   try {
     const chatRef = doc(db, CHATS_COLLECTION, chatId);

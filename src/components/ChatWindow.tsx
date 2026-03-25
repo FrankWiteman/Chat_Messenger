@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { Chat } from '../types';
-import { ArrowLeft, Send, MoreVertical, Smile, Paperclip, Check, CheckCheck, Camera, Image as ImageIcon, FileText, Phone, Video, ChevronLeft, Film } from 'lucide-react';
+import { ArrowLeft, Send, MoreVertical, Smile, Paperclip, Check, CheckCheck, Camera, Image as ImageIcon, FileText, Phone, Video, ChevronLeft, Film, Loader } from 'lucide-react';
 import { generateAIResponse } from '../services/geminiService';
 import { useChat } from '../hooks/useChat';
 import { formatRelativeTime, isUserOnline } from '../utils/time';
+import { uploadFile } from '../services/fileService';
 
 interface ChatWindowProps {
   chat: Chat;
@@ -42,6 +43,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [tick, setTick] = useState(0);
   const [isFocused, setIsFocused] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   
   const typingTimeoutRef = useRef<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -156,14 +158,33 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       scrollToBottom();
   };
   
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type: 'image' | 'video' | 'document') => {
-      if (e.target.files && e.target.files[0]) {
-          const file = e.target.files[0];
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>, type: 'image' | 'video' | 'document') => {
+      if (!e.target.files || !e.target.files[0]) return;
+      const file = e.target.files[0];
+      setShowAttachMenu(false);
+
+      if (isAi) {
+          // AI chat: just use local URL (no upload needed)
           const url = URL.createObjectURL(file);
-          if(isAi) onSendMessage(chat.id, "", false, { type, url, name: file.name });
-          else sendReal("", false, { type, url, name: file.name });
-          setShowAttachMenu(false);
+          onSendMessage(chat.id, "", false, { type, url, name: file.name });
+          return;
       }
+
+      // Real chat: upload through fileService (IndexedDB + optional cloud)
+      setIsUploading(true);
+      try {
+          const messageFile = await uploadFile(file, chat.id);
+          sendReal("", false, { type: messageFile.type, url: messageFile.url, name: messageFile.name });
+      } catch (err: any) {
+          console.error('[BBM] File upload failed:', err);
+          // Fallback to local URL so the message still sends
+          const url = URL.createObjectURL(file);
+          sendReal("", false, { type, url, name: file.name });
+      } finally {
+          setIsUploading(false);
+      }
+      // Reset input so the same file can be re-selected
+      e.target.value = '';
   };
 
   const formatTime = (timestamp: any) => {
@@ -310,10 +331,10 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
 
              <button 
                 onClick={handleSend} 
-                disabled={!inputText.trim()} 
-                className={`h-11 w-11 shrink-0 rounded-full flex items-center justify-center transition-all shadow-sm active:scale-95 ${inputText.trim() ? 'bg-bbm-blue text-white scale-100' : 'bg-gray-200 dark:bg-gray-700 text-gray-400'}`}
+                disabled={!inputText.trim() || isUploading} 
+                className={`h-11 w-11 shrink-0 rounded-full flex items-center justify-center transition-all shadow-sm active:scale-95 ${inputText.trim() && !isUploading ? 'bg-bbm-blue text-white scale-100' : 'bg-gray-200 dark:bg-gray-700 text-gray-400'}`}
              >
-                <Send size={20} className={inputText.trim() ? 'ml-0.5' : ''}/>
+                {isUploading ? <Loader size={18} className="animate-spin" /> : <Send size={20} className={inputText.trim() ? 'ml-0.5' : ''}/>}
              </button>
          </div>
 

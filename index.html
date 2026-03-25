@@ -2,31 +2,47 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+
+    <!--
+      viewport-fit=cover: lets the app draw into the notch/home-indicator area
+      interactive-widget=resizes-content: on Android, keyboard resizes layout (not overlaps)
+      user-scalable=no: prevents accidental pinch-zoom in a messaging app
+    -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no, interactive-widget=resizes-content" />
+
     <title>BBM Reborn</title>
-    
+
+    <!-- PWA manifest -->
     <link rel="manifest" href="/manifest.json" />
-    <link rel="icon" type="image/png" href="/icon.png" />
+
+    <!-- Favicon + Apple touch icon -->
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon.png" />
     <link rel="apple-touch-icon" href="/icon.png" />
-    
-    <!-- PWA Hardware & Identity Meta Tags based on provided snippet -->
+    <!-- Splash screen icons for various iPhone/iPad sizes -->
+    <link rel="apple-touch-icon" sizes="152x152" href="/icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon.png" />
+    <link rel="apple-touch-icon" sizes="167x167" href="/icon.png" />
+
+    <!-- iOS PWA config -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- black-translucent: status bar overlays the app (needed for full-bleed look) -->
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="BBM" />
+
+    <!-- Android / Chrome PWA -->
     <meta name="mobile-web-app-capable" content="yes" />
+    <!-- theme-color controls the Android status bar colour -->
     <meta name="theme-color" content="#020617" />
+    <!-- msapplication for Windows PWA -->
+    <meta name="msapplication-TileColor" content="#020617" />
+
+    <!-- Prevent phone-number auto-linking -->
     <meta name="format-detection" content="telephone=no" />
 
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      // Polyfills for simple-peer
-      window.global = window;
-      window.process = { env: { DEBUG: undefined } };
-    </script>
-    <script src="https://cdn.jsdelivr.net/npm/buffer@6.0.3/index.min.js"></script>
-    <script>
-      window.Buffer = buffer.Buffer;
-    </script>
+    <!-- WebRTC uses native browser APIs — no polyfills needed -->
 
+    <!-- Tailwind (CDN for dev; swap for build-time in production) -->
+    <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         darkMode: 'class',
@@ -35,31 +51,37 @@
             fontFamily: {
               sans: ['"SF Pro Text"', '"SF Pro Display"', '-apple-system', 'BlinkMacSystemFont', 'Roboto', '"Segoe UI"', 'Helvetica', 'Arial', 'sans-serif'],
             },
-            spacing: {
-              'safe-top': 'env(safe-area-inset-top)',
-              'safe-bottom': 'env(safe-area-inset-bottom)',
-              'safe-left': 'env(safe-area-inset-left)',
-              'safe-right': 'env(safe-area-inset-right)',
-            },
             colors: {
               bbm: {
-                blue: '#00A8E8', 
-                cerulean: '#007BA7',
-                arctic: '#82EEFD',
-                dark: '#0f172a', 
-                darker: '#020617', 
-                light: '#f8fafc', 
-                card: '#1e293b', 
-                red: '#ef4444', 
-                olive: '#82B324', 
-                input: '#F1F5F9'
+                blue:    '#00A8E8',
+                cerulean:'#007BA7',
+                arctic:  '#82EEFD',
+                dark:    '#0f172a',
+                darker:  '#020617',
+                light:   '#f8fafc',
+                card:    '#1e293b',
+                red:     '#ef4444',
+                olive:   '#82B324',
+                input:   '#F1F5F9',
               }
-            }
+            },
+            // These let you use pt-safe-top, pb-safe-bottom etc. in Tailwind classes
+            padding: {
+              'safe-top':    'env(safe-area-inset-top)',
+              'safe-bottom': 'env(safe-area-inset-bottom)',
+              'safe-left':   'env(safe-area-inset-left)',
+              'safe-right':  'env(safe-area-inset-right)',
+            },
+            margin: {
+              'safe-top':    'env(safe-area-inset-top)',
+              'safe-bottom': 'env(safe-area-inset-bottom)',
+            },
           },
         },
       }
     </script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Import map for ESM modules -->
     <script type="importmap">
 {
   "imports": {
@@ -71,13 +93,12 @@
     "firebase/": "https://esm.sh/firebase@^12.6.0/",
     "vite": "https://esm.sh/vite@^7.2.7",
     "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
-    "simple-peer": "https://esm.sh/simple-peer@9.11.1",
     "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@^2.89.0"
   }
 }
-</script>
+    </script>
   </head>
-  <body class="bg-bbm-light dark:bg-bbm-darker">
+  <body class="bg-bbm-darker">
     <div id="root"></div>
     <script type="module" src="/src/index.tsx"></script>
   </body>

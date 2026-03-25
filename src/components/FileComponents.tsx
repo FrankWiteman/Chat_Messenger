@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Download, FileText, Video, Loader } from 'lucide-react';
-import { getFile } from '../services/hybridFileService';
+import { getFile } from '../services/fileService';
 
 export const FileBubble: React.FC<{ 
   url?: string; 

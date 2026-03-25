@@ -1,0 +1,17 @@
+<svg width="1242" height="2436" viewBox="0 0 1242 2436" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1242" height="2436" fill="#020617" />
+  <g transform="translate(421, 900) scale(3.3)">
+    <path d="M20,25 H100 A12,12 0 0 1 112,37 V83 A12,12 0 0 1 100,95 H35 L15,110 V95 H20 A12,12 0 0 1 8,83 V37 A12,12 0 0 1 20,25 Z" fill="#00A8E8" />
+    <g transform="translate(60, 60) skewX(-15)">
+      <rect x="-28" y="-22" width="16" height="12" rx="3" fill="white" />
+      <rect x="-28" y="-6" width="16" height="12" rx="3" fill="white" />
+      <rect x="-8" y="-22" width="16" height="12" rx="3" fill="white" />
+      <rect x="-8" y="-6" width="16" height="12" rx="3" fill="white" />
+      <rect x="-8" y="10" width="16" height="12" rx="3" fill="white" />
+      <rect x="12" y="-6" width="16" height="12" rx="3" fill="white" />
+      <rect x="12" y="10" width="16" height="12" rx="3" fill="white" />
+    </g>
+  </g>
+  <text x="621" y="1400" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="800" font-size="64" fill="white" text-anchor="middle" letter-spacing="2">BBM REBORN</text>
+  <text x="621" y="2300" font-family="monospace" font-size="24" fill="#475569" text-anchor="middle">BBM REBIRTH</text>
+</svg>

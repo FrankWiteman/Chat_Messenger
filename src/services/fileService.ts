@@ -1,74 +1,108 @@
+import { storage } from './firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import type { MessageFile } from '../types';
 
 // ============================================================================
-// HELPERS
+// IndexedDB — local file cache
 // ============================================================================
+const DB_NAME = 'BBM_FileStorage';
+const DB_VERSION = 3;
+const FILES_STORE = 'files';
 
+let dbPromise: Promise<IDBDatabase> | null = null;
+
+const initDB = (): Promise<IDBDatabase> => {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = (event) => {
+      const idb = (event.target as IDBOpenDBRequest).result;
+      if (!idb.objectStoreNames.contains(FILES_STORE)) {
+        const store = idb.createObjectStore(FILES_STORE, { keyPath: 'id' });
+        store.createIndex('chatId', 'chatId', { unique: false });
+      }
+    };
+  });
+  return dbPromise;
+};
+
+// ============================================================================
+// Types
+// ============================================================================
+export interface StoredFile {
+  id: string;
+  name: string;
+  type: MessageFile['type'];
+  size: number;
+  mimeType: string;
+  data: ArrayBuffer;
+  localUrl?: string;
+  cloudUrl?: string;
+  chatId?: string;
+  uploadedAt: number;
+  synced: boolean;
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
 export const getFileType = (file: File): MessageFile['type'] => {
-  const mimeType = file.type.toLowerCase();
-  
-  if (mimeType.startsWith('image/')) return 'image';
-  if (mimeType.startsWith('video/')) return 'video';
-  if (mimeType.startsWith('audio/')) return 'audio';
-  
-  const documentTypes = [
-    'application/pdf', 'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'text/plain', 'text/csv'
-  ];
-  
-  if (documentTypes.includes(mimeType)) return 'document';
+  const mime = file.type.toLowerCase();
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  if (mime.startsWith('audio/')) return 'audio';
+  if (
+    mime.includes('pdf') ||
+    mime.includes('document') ||
+    mime === 'text/plain' ||
+    mime === 'text/csv'
+  )
+    return 'document';
   return 'other';
 };
 
 export const validateFile = (file: File): { valid: boolean; error?: string } => {
-  // Strict 2MB limit for Base64 storage to prevent Firestore bloat
-  const MAX_SIZE = 2 * 1024 * 1024; 
-  
+  const MAX_SIZE = 10 * 1024 * 1024; // 10MB
   if (file.size > MAX_SIZE) {
     return {
       valid: false,
-      error: `File is too large (${(file.size/1024/1024).toFixed(1)}MB). Max 2MB allowed in free mode.`
+      error: `File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Max 10 MB.`,
     };
   }
-  
   return { valid: true };
 };
 
-// ============================================================================
-// COMPRESSION & CONVERSION
-// ============================================================================
-
-export const compressImage = async (file: File, maxWidth: number = 800, quality: number = 0.6): Promise<Blob> => {
+// Single canonical compressImage — 1200px max, 0.7 quality
+export const compressImage = async (
+  file: File,
+  maxWidth = 1200,
+  quality = 0.7
+): Promise<Blob> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
-        
-        // Resize logic
+        let { width, height } = img;
         if (width > maxWidth) {
           height = (height * maxWidth) / width;
           width = maxWidth;
         }
-        
         canvas.width = width;
         canvas.height = height;
-        
         const ctx = canvas.getContext('2d');
-        if (!ctx) { reject(new Error('Canvas error')); return; }
-        
+        if (!ctx) return reject(new Error('Canvas error'));
         ctx.drawImage(img, 0, 0, width, height);
-        
-        canvas.toBlob((blob) => {
-            if (blob) resolve(blob);
-            else reject(new Error('Compression failed'));
-        }, 'image/jpeg', quality);
+        canvas.toBlob(
+          (blob) => (blob ? resolve(blob) : reject(new Error('Compression failed'))),
+          'image/jpeg',
+          quality
+        );
       };
       img.src = e.target?.result as string;
     };
@@ -76,119 +110,174 @@ export const compressImage = async (file: File, maxWidth: number = 800, quality:
   });
 };
 
-const blobToBase64 = (blob: Blob): Promise<string> => {
-  return new Promise((resolve, reject) => {
+const blobToBase64 = (blob: Blob): Promise<string> =>
+  new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => resolve(reader.result as string);
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
+
+// ============================================================================
+// Local IndexedDB operations
+// ============================================================================
+export const saveFileLocally = async (file: File, chatId?: string): Promise<StoredFile> => {
+  const idb = await initDB();
+  const fileType = getFileType(file);
+  let fileToStore = file;
+
+  if (fileType === 'image') {
+    try {
+      const compressed = await compressImage(file);
+      fileToStore = new File([compressed], file.name, { type: 'image/jpeg' });
+    } catch {
+      console.warn('[BBM] Compression failed, using original');
+    }
+  }
+
+  const arrayBuffer = await fileToStore.arrayBuffer();
+  const id = `file_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const storedFile: StoredFile = {
+    id,
+    name: file.name,
+    type: fileType,
+    size: fileToStore.size,
+    mimeType: fileToStore.type,
+    data: arrayBuffer,
+    localUrl: URL.createObjectURL(new Blob([arrayBuffer], { type: fileToStore.type })),
+    chatId,
+    uploadedAt: Date.now(),
+    synced: false,
+  };
+
+  return new Promise((resolve, reject) => {
+    const tx = idb.transaction([FILES_STORE], 'readwrite');
+    tx.objectStore(FILES_STORE).add(storedFile);
+    tx.oncomplete = () => resolve(storedFile);
+    tx.onerror = () => reject(tx.error);
+  });
+};
+
+export const getFile = async (fileId: string): Promise<StoredFile | null> => {
+  const idb = await initDB();
+  return new Promise((resolve) => {
+    const req = idb
+      .transaction([FILES_STORE], 'readonly')
+      .objectStore(FILES_STORE)
+      .get(fileId);
+    req.onsuccess = () => {
+      const file = req.result as StoredFile;
+      if (file) {
+        file.localUrl = URL.createObjectURL(new Blob([file.data], { type: file.mimeType }));
+        resolve(file);
+      } else {
+        resolve(null);
+      }
+    };
+    req.onerror = () => resolve(null);
+  });
 };
 
 // ============================================================================
-// UPLOAD FUNCTIONS (Simulated for Zero Config)
+// Upload — Firebase Storage preferred, Base64 fallback
 // ============================================================================
-
 export const uploadFile = async (
   file: File,
-  _path: string, // Prefixed with underscore to fix unused variable lint error
-  onProgress?: (progress: number) => void
-): Promise<string> => {
-  
+  chatId: string,
+  onProgress?: (p: number) => void
+): Promise<MessageFile> => {
   const validation = validateFile(file);
   if (!validation.valid) throw new Error(validation.error);
 
-  const fileType = getFileType(file);
+  const stored = await saveFileLocally(file, chatId);
+  if (onProgress) onProgress(30);
 
-  // Simulate progress
-  if (onProgress) {
-      onProgress(10);
-      await new Promise(r => setTimeout(r, 100));
-      onProgress(50);
-  }
+  let url = stored.localUrl!;
 
-  // 1. IMAGES: Compress and convert to Base64
-  if (fileType === 'image') {
-      try {
-          const compressedBlob = await compressImage(file);
-          const base64String = await blobToBase64(compressedBlob);
-          if (onProgress) onProgress(100);
-          return base64String;
-      } catch (e) {
-          console.error("Compression error, trying original", e);
-          const base64String = await blobToBase64(file);
-          if (onProgress) onProgress(100);
-          return base64String;
+  if (navigator.onLine && storage) {
+    try {
+      const blob = new Blob([stored.data], { type: stored.mimeType });
+      const storageRef = ref(storage, `chats/${chatId}/${stored.id}_${file.name}`);
+      await uploadBytes(storageRef, blob);
+      url = await getDownloadURL(storageRef);
+      if (onProgress) onProgress(90);
+
+      // Update IndexedDB with cloud URL
+      const idb = await initDB();
+      const tx = idb.transaction([FILES_STORE], 'readwrite');
+      const store = tx.objectStore(FILES_STORE);
+      const req = store.get(stored.id);
+      req.onsuccess = () => {
+        const data = req.result as StoredFile;
+        if (data) { data.cloudUrl = url; data.synced = true; store.put(data); }
+      };
+    } catch (e) {
+      console.warn('[BBM] Cloud upload failed, using Base64 fallback', e);
+      if (stored.type === 'image') {
+        const compressed = await compressImage(file, 800, 0.6);
+        url = await blobToBase64(compressed);
       }
-  } 
-  
-  // 2. VIDEOS: Too large for Base64 in Firestore typically. Return mock for demo.
-  if (fileType === 'video') {
-      if (onProgress) onProgress(100);
-      return "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"; 
+    }
+  } else if (stored.type === 'image') {
+    const compressed = await compressImage(file, 800, 0.6);
+    url = await blobToBase64(compressed);
   }
 
-  // 3. OTHERS: Try to convert, might fail size limit
-  const base64String = await blobToBase64(file);
   if (onProgress) onProgress(100);
-  return base64String;
+
+  return {
+    type: stored.type,
+    name: file.name,
+    size: file.size,
+    url,
+    thumbnailUrl: url,
+    mimeType: file.type,
+    uploadedAt: Date.now(),
+  };
 };
 
 // ============================================================================
-// PROFILE PICTURE
+// Profile picture
 // ============================================================================
-
 export const uploadProfilePicture = async (
   file: File,
   userId: string,
-  onProgress?: (progress: number) => void
+  onProgress?: (p: number) => void
 ): Promise<string> => {
-  if (!db) throw new Error("Database not initialized");
-  
-  if (!file.type.startsWith('image/')) {
-      throw new Error('Please select an image file');
+  if (!file.type.startsWith('image/')) throw new Error('Please select an image file');
+
+  const compressed = await compressImage(file, 400, 0.7);
+  let url: string;
+
+  if (navigator.onLine && storage) {
+    try {
+      const storageRef = ref(storage, `avatars/${userId}_${Date.now()}.jpg`);
+      await uploadBytes(storageRef, compressed);
+      url = await getDownloadURL(storageRef);
+    } catch {
+      url = await blobToBase64(compressed);
+    }
+  } else {
+    url = await blobToBase64(compressed);
   }
-    
-  // Aggressive compression for avatars
-  const compressed = await compressImage(file, 300, 0.6);
-  const base64Url = await blobToBase64(compressed);
-  
+
+  if (onProgress) onProgress(80);
+
+  if (db) {
+    await updateDoc(doc(db, 'users', userId), {
+      avatarUrl: url,
+      lastStatusUpdate: Date.now(),
+    });
+  }
+
   if (onProgress) onProgress(100);
-
-  // Save directly to User document
-  const userRef = doc(db, 'users', userId);
-  await updateDoc(userRef, {
-      avatarUrl: base64Url,
-      lastStatusUpdate: Date.now()
-  });
-    
-  return base64Url;
+  return url;
 };
 
 // ============================================================================
-// HELPER FOR CHAT
+// Utilities
 // ============================================================================
-
-export const createFileMessageData = async (
-  chatId: string,
-  file: File,
-  onProgress?: (progress: number) => void
-): Promise<MessageFile> => {
-    const fileType = getFileType(file);
-    const url = await uploadFile(file, `chats/${chatId}`, onProgress);
-    
-    return {
-      type: fileType,
-      name: file.name,
-      size: file.size,
-      url: url,
-      thumbnailUrl: url, 
-      mimeType: file.type,
-      uploadedAt: Date.now()
-    };
-};
-
-export const downloadFile = async (url: string, fileName: string): Promise<void> => {
+export const downloadFile = (url: string, fileName: string): void => {
   const link = document.createElement('a');
   link.href = url;
   link.download = fileName;

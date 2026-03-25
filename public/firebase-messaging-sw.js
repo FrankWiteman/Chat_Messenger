@@ -7,12 +7,12 @@ importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-comp
 
 // Initialize Firebase (Generic placeholder - works for push events without specific config in many cases for Web Push)
 firebase.initializeApp({
-  apiKey: "AIzaSyDYbwSA0gC_djXBc5oYN1ApQMN_zU1qZ8U",
-  authDomain: "bbm-reborn-840f9.firebaseapp.com",
-  projectId: "bbm-reborn-840f9",
-  storageBucket: "bbm-reborn-840f9.firebasestorage.app",
-  messagingSenderId: "33190102542",
-  appId: "1:33190102542:web:2df7c67234c7a2808b5e5f"
+  apiKey: ,
+  authDomain: ,
+  projectId: ,
+  storageBucket: 
+  messagingSenderId:
+  appId: 
 });
 
 const messaging = firebase.messaging();
